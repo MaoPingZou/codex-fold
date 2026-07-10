@@ -161,6 +161,10 @@ impl ChatWidget {
                 } else {
                     None
                 };
+                // The separator now renders empty when it carries no label, so it can no longer be
+                // relied on to flush a still-active exec summary. Flush explicitly to cover turns
+                // that did work but ended without a streamed assistant message.
+                self.flush_active_cell();
                 self.add_to_history(history_cell::FinalMessageSeparator::new(
                     elapsed_seconds,
                     runtime_metrics,

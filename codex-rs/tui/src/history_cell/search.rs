@@ -89,25 +89,16 @@ impl WebSearchCell {
 
 impl HistoryCell for WebSearchCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let bullet = if self.completed {
-            "•".dim()
-        } else {
-            activity_indicator(
-                Some(self.start_time),
-                MotionMode::from_animations_enabled(self.animations_enabled),
-                ReducedMotionIndicator::StaticBullet,
-            )
-            .unwrap_or_else(|| "•".dim())
-        };
         let header = web_search_header(self.completed);
         let detail = web_search_detail(self.action.as_ref(), &self.query);
+        // Low-key activity style: no bullet, dim text, two-column indent.
         let text: Text<'static> = if detail.is_empty() {
-            Line::from(vec![header.bold()]).into()
+            Line::from(vec![header.dim()]).into()
         } else {
             let separator = if self.completed { " for " } else { " " };
-            Line::from(vec![header.bold(), separator.into(), detail.into()]).into()
+            Line::from(vec![header.dim(), separator.dim(), detail.dim()]).into()
         };
-        PrefixedWrappedHistoryCell::new(text, vec![bullet, " ".into()], "  ").display_lines(width)
+        PrefixedWrappedHistoryCell::new(text, vec!["  ".into()], "  ").display_lines(width)
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {

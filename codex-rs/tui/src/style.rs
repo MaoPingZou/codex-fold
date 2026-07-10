@@ -32,12 +32,13 @@ pub(crate) fn accent_style() -> Style {
     accent_style_for(default_bg())
 }
 
-/// Returns the style for a user-authored message using the provided terminal background.
-pub fn user_message_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {
-    match terminal_bg {
-        Some(bg) => Style::default().bg(user_message_bg(bg)),
-        None => Style::default(),
-    }
+/// Returns the style for a user-authored message.
+///
+/// The composer input box and history user-message bubbles both use this style. It intentionally
+/// carries no background fill so the input area and sent messages blend with the terminal
+/// background instead of showing a full-width gray band.
+pub fn user_message_style_for(_terminal_bg: Option<(u8, u8, u8)>) -> Style {
+    Style::default()
 }
 
 pub fn proposed_plan_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {

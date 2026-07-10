@@ -1641,7 +1641,7 @@ pub(super) async fn assert_hook_events_snapshot(
     reveal_running_hooks(&mut chat);
     assert!(
         active_hook_blob(&chat).contains(&format!(
-            "Running {} hook: {status_message}",
+            "Running {} hook…: {status_message}",
             hook_event_label(event_name)
         )),
         "hook start should render in the live hook cell"

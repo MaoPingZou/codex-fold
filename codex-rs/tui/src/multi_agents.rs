@@ -308,6 +308,56 @@ pub(crate) fn sub_agent_activity_history_cell(item: &ThreadItem) -> Option<Plain
     ))
 }
 
+/// Mutable, collapsed cell that aggregates consecutive `Started <agent>` spawn events into one
+/// low-key summary (`Started 3 agents` with the paths listed underneath) instead of emitting a
+/// separate history row per spawn. Held as the active cell while spawns arrive back-to-back and
+/// flushed like any other activity group when a different activity or an assistant message follows.
+#[derive(Debug)]
+pub(crate) struct StartedAgentsCell {
+    agent_paths: Vec<String>,
+}
+
+impl StartedAgentsCell {
+    pub(crate) fn new(agent_path: String) -> Self {
+        Self {
+            agent_paths: vec![agent_path],
+        }
+    }
+
+    pub(crate) fn push(&mut self, agent_path: String) {
+        self.agent_paths.push(agent_path);
+    }
+
+    fn lines(&self) -> Vec<Line<'static>> {
+        let n = self.agent_paths.len();
+        let header = if let [only] = self.agent_paths.as_slice() {
+            title_spans_line(vec![Span::from(format!("Started `{only}`"))])
+        } else {
+            title_spans_line(vec![Span::from(format!("Started {n} agents"))])
+        };
+        let mut out = vec![header];
+        if n > 1 {
+            let details: Vec<Line<'static>> = self
+                .agent_paths
+                .iter()
+                .map(|path| Line::from(Span::from(format!("`{path}`")).dim()))
+                .collect();
+            out.extend(prefix_lines(details, "  └ ".dim(), "    ".into()));
+        }
+        out
+    }
+}
+
+impl crate::history_cell::HistoryCell for StartedAgentsCell {
+    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        self.lines()
+    }
+
+    fn raw_lines(&self) -> Vec<Line<'static>> {
+        crate::history_cell::plain_lines(self.lines())
+    }
+}
+
 pub(crate) fn sub_agent_activity_summary(kind: SubAgentActivityKind, agent_path: &str) -> String {
     match kind {
         SubAgentActivityKind::Started => format!("Started `{agent_path}`"),
@@ -456,6 +506,8 @@ fn resume_end(
 fn collab_event(title: Line<'static>, details: Vec<Line<'static>>) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = vec![title];
     if !details.is_empty() {
+        // Match the low-key collapsed activity style: dim detail rows under a dim `└` gutter.
+        let details: Vec<Line<'static>> = details.into_iter().map(|line| line.dim()).collect();
         lines.extend(prefix_lines(details, "  └ ".dim(), "    ".into()));
     }
     PlainHistoryCell::new(lines)
@@ -476,10 +528,14 @@ fn title_with_agent(
     title_spans_line(spans)
 }
 
-fn title_spans_line(mut spans: Vec<Span<'static>>) -> Line<'static> {
-    let mut title = Vec::with_capacity(spans.len() + 1);
-    title.push(Span::from("• ").dim());
-    title.append(&mut spans);
+fn title_spans_line(spans: Vec<Span<'static>>) -> Line<'static> {
+    // Low-key activity style (like `Ran` / `Explored`): no leading bullet, a two-column indent
+    // that aligns with bulleted message body text, and uniformly dim text (bold/accent styling on
+    // the incoming spans is intentionally dropped).
+    let mut title: Vec<Span<'static>> = vec!["  ".into()];
+    for span in spans {
+        title.push(Span::from(span.content.into_owned()).dim());
+    }
     title.into()
 }
 
@@ -845,7 +901,7 @@ mod tests {
     }
 
     #[test]
-    fn title_styles_nickname_and_role() {
+    fn title_uses_low_key_dim_style() {
         let sender_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000001")
             .expect("valid sender thread id");
         let robie_id = ThreadId::from_string("00000000-0000-0000-0000-000000000002")
@@ -872,14 +928,23 @@ mod tests {
 
         let lines = cell.display_lines(/*width*/ 200);
         let title = &lines[0];
-        assert_eq!(title.spans[2].content.as_ref(), "Robie");
-        assert_eq!(title.spans[2].style.fg, Some(Color::Cyan));
-        assert!(title.spans[2].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(title.spans[4].content.as_ref(), "[explorer]");
-        assert_eq!(title.spans[4].style.fg, None);
-        assert!(!title.spans[4].style.add_modifier.contains(Modifier::DIM));
-        assert_eq!(title.spans[6].content.as_ref(), "(gpt-5 high)");
-        assert_eq!(title.spans[6].style.fg, Some(Color::Magenta));
+        // The collapsed activity style renders the whole title uniformly dim: the agent details are
+        // still present, but the previous accent colors (cyan nickname, magenta model) and bold are
+        // intentionally dropped for a low-key look.
+        let text: String = title.spans.iter().map(|span| span.content.as_ref()).collect();
+        assert!(text.contains("Robie"), "expected nickname in title, got: {text:?}");
+        assert!(text.contains("[explorer]"), "expected role in title, got: {text:?}");
+        assert!(text.contains("(gpt-5 high)"), "expected model in title, got: {text:?}");
+        for span in &title.spans {
+            assert_eq!(
+                span.style.fg, None,
+                "collapsed title spans should not be colored: {span:?}"
+            );
+            assert!(
+                !span.style.add_modifier.contains(Modifier::BOLD),
+                "collapsed title spans should not be bold: {span:?}"
+            );
+        }
     }
 
     #[test]

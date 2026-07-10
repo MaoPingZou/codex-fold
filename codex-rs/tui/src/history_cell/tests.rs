@@ -484,7 +484,7 @@ fn image_generation_call_renders_saved_path() {
     assert_eq!(
         render_lines(&cell.display_lines(/*width*/ 80)),
         vec![
-            "• Generated Image:".to_string(),
+            "  Generated Image:".to_string(),
             "  └ A tiny blue square".to_string(),
             expected_saved_path,
         ],
@@ -1170,7 +1170,7 @@ fn web_search_history_cell_wraps_with_indented_continuation() {
     assert_eq!(
         rendered,
         vec![
-            "• Searched the web for example search query with several generic".to_string(),
+            "  Searched the web for example search query with several generic".to_string(),
             "  words to exercise wrapping".to_string(),
         ]
     );
@@ -1191,7 +1191,7 @@ fn web_search_history_cell_short_query_does_not_wrap() {
 
     assert_eq!(
         rendered,
-        vec!["• Searched the web for short query".to_string()]
+        vec!["  Searched the web for short query".to_string()]
     );
 }
 
@@ -1247,7 +1247,7 @@ fn mcp_inventory_loading_without_animations_is_stable() {
     let second = render_lines(&cell.display_lines(/*width*/ 80));
 
     assert_eq!(first, second);
-    assert_eq!(first, vec!["• Loading MCP inventory…".to_string()]);
+    assert_eq!(first, vec!["  Loading MCP inventory…".to_string()]);
 }
 
 #[test]
@@ -2082,7 +2082,7 @@ fn user_history_cell_trims_trailing_blank_message_lines() {
         .rev()
         .take_while(|line| line.trim().is_empty())
         .count();
-    assert_eq!(trailing_blank_count, 1);
+    assert_eq!(trailing_blank_count, 0);
     assert!(rendered.iter().any(|line| line.contains("line one")));
 }
 
@@ -2105,7 +2105,7 @@ fn user_history_cell_trims_trailing_blank_message_lines_with_text_elements() {
         .rev()
         .take_while(|line| line.trim().is_empty())
         .count();
-    assert_eq!(trailing_blank_count, 1);
+    assert_eq!(trailing_blank_count, 0);
     assert!(rendered.iter().any(|line| line.contains("tokenized")));
 }
 

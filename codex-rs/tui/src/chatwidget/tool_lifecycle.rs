@@ -4,6 +4,7 @@
 //! events as transcript cells.
 
 use super::*;
+use codex_app_server_protocol::SubAgentActivityKind;
 use codex_utils_path_uri::LegacyAppPathString;
 
 impl ChatWidget {
@@ -149,6 +150,33 @@ impl ChatWidget {
 
     pub(super) fn on_sub_agent_activity(&mut self, item: ThreadItem) {
         self.record_visible_turn_activity();
+        // Aggregate consecutive `Started <agent>` spawns into a single collapsed cell so launching
+        // several sub-agents at once shows one `Started N agents` summary instead of one row each.
+        if let ThreadItem::SubAgentActivity {
+            kind: SubAgentActivityKind::Started,
+            agent_path,
+            ..
+        } = &item
+        {
+            let agent_path = agent_path.clone();
+            self.flush_answer_stream_with_separator();
+            if let Some(cell) = self
+                .transcript
+                .active_cell
+                .as_mut()
+                .and_then(|c| c.as_any_mut().downcast_mut::<multi_agents::StartedAgentsCell>())
+            {
+                cell.push(agent_path);
+                self.bump_active_cell_revision();
+            } else {
+                self.flush_active_cell();
+                self.transcript.active_cell =
+                    Some(Box::new(multi_agents::StartedAgentsCell::new(agent_path)));
+                self.bump_active_cell_revision();
+            }
+            self.request_redraw();
+            return;
+        }
         if let Some(cell) = multi_agents::sub_agent_activity_history_cell(&item) {
             self.on_collab_event(cell);
         }

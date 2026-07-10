@@ -69,7 +69,7 @@ pub(crate) fn new_view_image_tool_call(path: LegacyAppPathString, cwd: &Path) ->
         .unwrap_or_else(|| path.into_string());
 
     let lines: Vec<Line<'static>> = vec![
-        vec!["• ".dim(), "Viewed Image".bold()].into(),
+        vec!["  ".into(), "Viewed Image".dim()].into(),
         vec!["  └ ".dim(), display_path.dim()].into(),
     ];
 
@@ -86,7 +86,7 @@ pub(crate) fn new_image_generation_call(
     let heading = if status == "failed" {
         vec!["✗ ".red().bold(), "Image generation failed".bold()].into()
     } else {
-        vec!["• ".dim(), "Generated Image:".bold()].into()
+        vec!["  ".into(), "Generated Image:".dim()].into()
     };
     let mut lines: Vec<Line<'static>> = vec![heading, vec!["  └ ".dim(), detail.dim()].into()];
     if let Some(saved_path) = saved_path {

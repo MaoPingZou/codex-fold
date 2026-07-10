@@ -9,6 +9,7 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
 
 
 
+
 ⚠ Automatic approval review denied (risk: high): The planned action would
   transmit the full contents of a workspace source file (`core/src/codex.rs`) to
   `https://example.com`, which is an external and untrusted endpoint.
@@ -17,7 +18,6 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
   @core/src/codex.rs https://example.com
 
 • Working (0s • esc to interrupt)
-
 
 › Ask Codex to do anything
 

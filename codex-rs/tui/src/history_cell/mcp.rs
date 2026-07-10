@@ -120,24 +120,20 @@ impl HistoryCell for McpToolCallCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let status = self.success();
-        let bullet = match status {
-            Some(true) => "•".green().bold(),
-            Some(false) => "•".red().bold(),
-            None => activity_indicator(
-                Some(self.start_time),
-                MotionMode::from_animations_enabled(self.animations_enabled),
-                ReducedMotionIndicator::StaticBullet,
-            )
-            .unwrap_or_else(|| "•".dim()),
-        };
         let header_text = if status.is_some() {
             "Called"
         } else {
             "Calling"
         };
+        // Low-key activity style: no bullet, dim text (red when the call failed), two-column indent.
+        let header_span = if status == Some(false) {
+            header_text.red()
+        } else {
+            header_text.dim()
+        };
 
         let invocation_line = line_to_static(&format_mcp_invocation(self.invocation.clone()));
-        let mut compact_spans = vec![bullet.clone(), " ".into(), header_text.bold(), " ".into()];
+        let mut compact_spans = vec!["  ".into(), header_span, " ".into()];
         let mut compact_header = Line::from(compact_spans.clone());
         let reserved = compact_header.width();
 
@@ -640,14 +636,8 @@ impl HistoryCell for McpInventoryLoadingCell {
     fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
         vec![
             vec![
-                activity_indicator(
-                    Some(self.start_time),
-                    MotionMode::from_animations_enabled(self.animations_enabled),
-                    ReducedMotionIndicator::StaticBullet,
-                )
-                .unwrap_or_else(|| "•".dim()),
-                " ".into(),
-                "Loading MCP inventory".bold(),
+                "  ".into(),
+                "Loading MCP inventory".dim(),
                 "…".dim(),
             ]
             .into(),

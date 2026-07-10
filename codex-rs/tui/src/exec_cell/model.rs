@@ -64,7 +64,7 @@ impl ExecCell {
             duration: None,
             interaction_input,
         };
-        if self.is_exploring_cell() && Self::is_exploring_call(&call) {
+        if self.is_groupable_cell() && Self::is_groupable_call(&call) {
             Some(Self {
                 calls: [self.calls.clone(), vec![call]].concat(),
                 animations_enabled: self.animations_enabled,
@@ -94,8 +94,43 @@ impl ExecCell {
         true
     }
 
+    /// Appends an already-finished call (e.g. an interleaved / sub-agent exec end that arrived while
+    /// this cell was active) so that consecutive activity aggregates into a single summary instead
+    /// of spawning a standalone history entry. Returns `false` when the call is not groupable into
+    /// this cell, in which case the caller should fall back to a standalone cell.
+    pub(crate) fn push_completed_call(
+        &mut self,
+        call_id: String,
+        command: Vec<String>,
+        parsed: Vec<ParsedCommand>,
+        source: ExecCommandSource,
+        output: CommandOutput,
+        duration: Duration,
+    ) -> bool {
+        let call = ExecCall {
+            call_id,
+            command,
+            parsed,
+            output: Some(output),
+            source,
+            start_time: None,
+            duration: Some(duration),
+            interaction_input: None,
+        };
+        if self.is_groupable_cell() && Self::is_groupable_call(&call) {
+            self.calls.push(call);
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn should_flush(&self) -> bool {
-        !self.is_exploring_cell() && self.calls.iter().all(|c| c.output.is_some())
+        // Groupable (agent) cells accumulate consecutive tool calls and are only committed to
+        // history by an external flush (e.g. when the assistant starts talking or the turn ends),
+        // so they render as a single collapsed summary. User-shell and unified-exec cells keep the
+        // legacy behavior of flushing as soon as all their calls complete.
+        !self.is_groupable_cell() && self.calls.iter().all(|c| c.output.is_some())
     }
 
     pub(crate) fn mark_failed(&mut self) {
@@ -116,19 +151,22 @@ impl ExecCell {
         }
     }
 
-    pub(crate) fn is_exploring_cell(&self) -> bool {
-        self.calls.iter().all(Self::is_exploring_call)
+    /// A cell is "groupable" when every call in it is an agent-issued tool call. Such cells
+    /// accumulate consecutive calls (reads, searches, lists and shell commands alike) and render
+    /// as a single collapsed count summary instead of one entry per command.
+    pub(crate) fn is_groupable_cell(&self) -> bool {
+        !self.calls.is_empty() && self.calls.iter().all(Self::is_groupable_call)
+    }
+
+    pub(super) fn is_groupable_call(call: &ExecCall) -> bool {
+        !matches!(
+            call.source,
+            ExecCommandSource::UserShell | ExecCommandSource::UnifiedExecInteraction
+        )
     }
 
     pub(crate) fn is_active(&self) -> bool {
         self.calls.iter().any(|c| c.output.is_none())
-    }
-
-    pub(crate) fn active_start_time(&self) -> Option<Instant> {
-        self.calls
-            .iter()
-            .find(|c| c.output.is_none())
-            .and_then(|c| c.start_time)
     }
 
     pub(crate) fn animations_enabled(&self) -> bool {

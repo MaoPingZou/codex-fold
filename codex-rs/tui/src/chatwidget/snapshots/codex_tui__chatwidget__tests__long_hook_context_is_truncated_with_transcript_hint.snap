@@ -2,7 +2,7 @@
 source: tui/src/chatwidget/tests/status_and_layout.rs
 expression: history
 ---
-• SessionStart hook (stopped)
+  SessionStart hook (stopped)
   hook context: This hook context is intentionally long enough to wrap across
     several terminal rows while keeping the complete value available in the
     … +2 lines (ctrl + t to view transcript)

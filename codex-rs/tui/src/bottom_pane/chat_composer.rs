@@ -759,9 +759,9 @@ impl ChatComposer {
             ActivePopup::None => Constraint::Max(footer_total_height),
         };
         let [composer_rect, popup_rect] =
-            Layout::vertical([Constraint::Min(3), popup_constraint]).areas(area);
+            Layout::vertical([Constraint::Min(2), popup_constraint]).areas(area);
         let mut textarea_rect = composer_rect.inset(Insets::tlbr(
-            /*top*/ 1,
+            /*top*/ 0,
             LIVE_PREFIX_COLS,
             /*bottom*/ 1,
             /*right*/ 1u16.saturating_add(textarea_right_reserve),
@@ -4182,7 +4182,9 @@ impl ChatComposer {
         self.draft.textarea.desired_height(inner_width)
             + remote_images_height
             + remote_images_separator
-            + 2
+            // Only the 1-row bottom inset remains (the top inset was removed so the input sits
+            // directly under the prior history instead of leaving a blank row above it).
+            + 1
             + match &self.popups.active {
                 ActivePopup::None => footer_total_height,
                 ActivePopup::Command(c) => c.calculate_required_height(width),
@@ -4896,11 +4898,11 @@ mod tests {
 
         composer.set_text_content("!git".to_string(), Vec::new(), Vec::new());
         composer.move_cursor_to_end();
-        assert_eq!(composer.cursor_pos(area), Some((5, 1)));
+        assert_eq!(composer.cursor_pos(area), Some((5, 0)));
 
         composer.set_text_content("! git".to_string(), Vec::new(), Vec::new());
         composer.move_cursor_to_end();
-        assert_eq!(composer.cursor_pos(area), Some((6, 1)));
+        assert_eq!(composer.cursor_pos(area), Some((6, 0)));
     }
 
     #[test]
@@ -4924,7 +4926,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         composer.render(area, &mut buf);
 
-        let prompt_cell = &buf[(0, 1)];
+        let prompt_cell = &buf[(0, 0)];
         assert_eq!(prompt_cell.symbol(), "!");
         assert_eq!(prompt_cell.style().fg, Some(Color::LightRed));
 
@@ -4946,7 +4948,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         composer.render(area, &mut buf);
 
-        let textarea_row = 1;
+        let textarea_row = 0;
         let row_text = (0..area.width)
             .map(|x| {
                 buf[(x, textarea_row)]

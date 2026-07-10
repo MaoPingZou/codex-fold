@@ -366,10 +366,24 @@ impl ChatWidget {
         let is_unified_exec_interaction =
             matches!(source, ExecCommandSource::UnifiedExecInteraction);
         let is_user_shell = source == ExecCommandSource::UserShell;
+        // A completed call is groupable when it is an agent-issued tool call (not a user shell or a
+        // unified-exec interaction). Compound shell commands parsed as `Unknown` skip their begin
+        // event, so they never seed or join the active group up front; the end-side merge below is
+        // the only place they can aggregate into the surrounding summary.
+        let incoming_groupable = !matches!(
+            source,
+            ExecCommandSource::UserShell | ExecCommandSource::UnifiedExecInteraction
+        );
         let end_target = match self.transcript.active_cell.as_ref() {
             Some(cell) => match cell.as_any().downcast_ref::<ExecCell>() {
                 Some(exec_cell) if exec_cell.iter_calls().any(|call| call.call_id == id) => {
                     ExecEndTarget::ActiveTracked
+                }
+                // Merge a groupable completed call into an existing groupable agent group even when
+                // that group has no call still running. This keeps consecutive activity collapsed
+                // into a single summary instead of flushing the group and starting a new cell.
+                Some(exec_cell) if incoming_groupable && exec_cell.is_groupable_cell() => {
+                    ExecEndTarget::OrphanHistoryWhileActiveExec
                 }
                 Some(exec_cell) if exec_cell.is_active() => {
                     ExecEndTarget::OrphanHistoryWhileActiveExec
@@ -414,20 +428,43 @@ impl ChatWidget {
                 }
             }
             ExecEndTarget::OrphanHistoryWhileActiveExec => {
-                let mut orphan = new_active_exec_command(
-                    id.clone(),
-                    command,
-                    parsed,
-                    source,
-                    /*interaction_input*/ None,
-                    self.config.animations,
-                );
-                let completed = orphan.complete_call(&id, output, duration);
-                debug_assert!(completed, "new orphan exec cell should contain {id}");
-                self.transcript.needs_final_message_separator = true;
-                self.app_event_tx
-                    .send(AppEvent::InsertHistoryCell(Box::new(orphan)));
-                self.request_redraw();
+                // Prefer merging the orphan completed call into the active exec cell so interleaved
+                // and parallel sub-agent commands aggregate into a single summary (e.g. "Ran 3
+                // shell commands") instead of many standalone "Ran 1 shell command" entries.
+                let merged = self
+                    .transcript
+                    .active_cell
+                    .as_mut()
+                    .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
+                    .is_some_and(|cell| {
+                        cell.push_completed_call(
+                            id.clone(),
+                            command.clone(),
+                            parsed.clone(),
+                            source,
+                            output.clone(),
+                            duration,
+                        )
+                    });
+                if merged {
+                    self.bump_active_cell_revision();
+                    self.request_redraw();
+                } else {
+                    let mut orphan = new_active_exec_command(
+                        id.clone(),
+                        command,
+                        parsed,
+                        source,
+                        /*interaction_input*/ None,
+                        self.config.animations,
+                    );
+                    let completed = orphan.complete_call(&id, output, duration);
+                    debug_assert!(completed, "new orphan exec cell should contain {id}");
+                    self.transcript.needs_final_message_separator = true;
+                    self.app_event_tx
+                        .send(AppEvent::InsertHistoryCell(Box::new(orphan)));
+                    self.request_redraw();
+                }
             }
             ExecEndTarget::NewCell => {
                 self.flush_active_cell();

@@ -13,10 +13,6 @@
 use super::HistoryCell;
 use super::plain_lines;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
-use crate::motion::MotionMode;
-use crate::motion::ReducedMotionIndicator;
-use crate::motion::activity_indicator;
-use crate::motion::shimmer_text;
 use crate::render::line_utils::push_owned_lines;
 use crate::render::renderable::Renderable;
 use crate::ui_consts::TRANSCRIPT_HINT;
@@ -458,15 +454,16 @@ impl HookRunCell {
             }
             HookRunState::Completed { status, entries } => {
                 let status_text = format!("{status:?}").to_lowercase();
-                let bullet = hook_completed_bullet(*status, entries);
-                lines.push(
-                    vec![
-                        bullet,
-                        " ".into(),
-                        format!("{label} hook ({status_text})").into(),
-                    ]
-                    .into(),
-                );
+                // Low-key activity style: no bullet, dim title, two-column indent. Failed/blocked/
+                // stopped hooks stay red so alerts remain visible.
+                let title = format!("{label} hook ({status_text})");
+                let title_span = match status {
+                    HookRunStatus::Blocked | HookRunStatus::Failed | HookRunStatus::Stopped => {
+                        title.red()
+                    }
+                    _ => title.dim(),
+                };
+                lines.push(vec!["  ".into(), title_span].into());
                 for entry in entries {
                     if !render_full_context && entry.kind == HookOutputEntryKind::Context {
                         lines.extend(hook_context_preview_lines(&entry.text, width));
@@ -729,26 +726,17 @@ fn push_running_hook_group(
 fn push_running_hook_header(
     lines: &mut Vec<Line<'static>>,
     hook_text: &str,
-    start_time: Option<Instant>,
+    _start_time: Option<Instant>,
     status_message: Option<&str>,
-    animations_enabled: bool,
+    _animations_enabled: bool,
 ) {
-    let mut header = Vec::new();
-    let motion_mode = MotionMode::from_animations_enabled(animations_enabled);
-    if let Some(indicator) =
-        activity_indicator(start_time, motion_mode, ReducedMotionIndicator::Hidden)
-    {
-        header.push(indicator);
-        header.push(" ".into());
-    }
-    header.extend(shimmer_text(hook_text, motion_mode));
-    if !animations_enabled && let Some(span) = header.last_mut() {
-        span.style = span.style.patch(Style::default().bold());
-    }
+    // Low-key activity style: no spinner/bullet, dim text with a trailing ellipsis, two-column
+    // indent — consistent with the collapsed `Running …` exec summaries.
+    let mut header: Vec<Span<'static>> = vec!["  ".into(), hook_text.to_string().dim(), "…".dim()];
     if let Some(status_message) = status_message
         && !status_message.is_empty()
     {
-        header.push(": ".into());
+        header.push(": ".dim());
         header.push(status_message.to_string().dim());
     }
     lines.push(header.into());
@@ -859,7 +847,7 @@ mod tests {
             }],
         );
         let expected = vec![
-            "• SessionStart hook (completed)".to_string(),
+            "  SessionStart hook (completed)".to_string(),
             "  hook context: ## Working Memory Recall".to_string(),
             "".to_string(),
             "    Source: Codex compaction".to_string(),
@@ -903,7 +891,7 @@ mod tests {
         assert!(display.iter().all(|line| !line.contains("tail-marker")));
 
         let expected_full = vec![
-            "• SessionStart hook (completed)".to_string(),
+            "  SessionStart hook (completed)".to_string(),
             format!("  hook context: {full_context}"),
         ];
         assert_eq!(
@@ -958,7 +946,7 @@ mod tests {
         assert_eq!(
             line_texts(&cell.display_lines(/*width*/ 80)),
             vec![
-                "• PostToolUse hook (completed)".to_string(),
+                "  PostToolUse hook (completed)".to_string(),
                 "  warning: Heads up".to_string(),
                 "    Review generated files".to_string(),
             ]
@@ -1012,7 +1000,7 @@ mod tests {
 
         assert_eq!(
             rendered,
-            vec!["Running PostToolUse hook: checking output policy".to_string()]
+            vec!["  Running PostToolUse hook…: checking output policy".to_string()]
         );
     }
 

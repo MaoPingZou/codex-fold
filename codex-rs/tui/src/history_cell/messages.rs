@@ -171,7 +171,10 @@ impl HistoryCell for UserHistoryCell {
             return Vec::new();
         }
 
-        let mut lines: Vec<Line<'static>> = vec![Line::from("").style(style)];
+        // No top/bottom blank-line padding: the user message bubble no longer has a background
+        // band that needed vertical inset, so we rely on the normal single blank line that history
+        // insertion places between cells instead of adding extra empty rows.
+        let mut lines: Vec<Line<'static>> = Vec::new();
 
         if let Some(wrapped_remote_images) = wrapped_remote_images {
             lines.extend(prefix_lines(
@@ -192,7 +195,6 @@ impl HistoryCell for UserHistoryCell {
             ));
         }
 
-        lines.push(Line::from("").style(style));
         lines
     }
 

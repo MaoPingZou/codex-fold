@@ -1,8 +1,8 @@
 ---
-source: tui/src/history_cell.rs
+source: tui/src/history_cell/tests.rs
 expression: rendered
 ---
-• Called
+  Called
   └ search.find_docs({"query":"ratatui
         styling","limit":3})
     Found styling guidance in styles.md and

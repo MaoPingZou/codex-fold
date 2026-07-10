@@ -300,24 +300,31 @@ async fn exec_history_cell_shows_working_then_completed() {
 
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 0, "no exec cell should have been flushed yet");
+    // While running, the collapsed summary uses the in-progress verb and shows the command target.
+    let active = active_blob(&chat);
+    assert!(
+        active.contains("Running 1 shell command"),
+        "expected in-progress summary: {active:?}"
+    );
+    assert!(
+        active.contains("echo done"),
+        "expected running command target: {active:?}"
+    );
 
     // End command successfully
     end_exec(&mut chat, begin, "done", "", /*exit_code*/ 0);
 
+    // Groupable agent commands accumulate into the active group; completion alone does not flush.
     let cells = drain_insert_history(&mut rx);
-    // Exec end now finalizes and flushes the exec cell immediately.
-    assert_eq!(cells.len(), 1, "expected finalized exec cell to flush");
-    // Inspect the flushed exec cell rendering.
-    let lines = &cells[0];
-    let blob = lines_to_single_string(lines);
-    // New behavior: no glyph markers; ensure command is shown and no panic.
-    assert!(
-        blob.contains("• Ran"),
-        "expected summary header present: {blob:?}"
+    assert_eq!(
+        cells.len(),
+        0,
+        "completed agent command should stay in the active group, not flush"
     );
+    let active = active_blob(&chat);
     assert!(
-        blob.contains("echo done"),
-        "expected command text to be present: {blob:?}"
+        active.contains("Ran 1 shell command"),
+        "expected collapsed completed summary: {active:?}"
     );
 }
 
@@ -334,15 +341,26 @@ async fn exec_history_cell_shows_working_then_failed() {
     end_exec(&mut chat, begin, "", "Bloop", /*exit_code*/ 2);
 
     let cells = drain_insert_history(&mut rx);
-    // Exec end with failure should also flush immediately.
-    assert_eq!(cells.len(), 1, "expected finalized exec cell to flush");
-    let lines = &cells[0];
-    let blob = lines_to_single_string(lines);
-    assert!(
-        blob.contains("• Ran false"),
-        "expected command and header text present: {blob:?}"
+    // The failed command stays in the active group like any groupable agent command.
+    assert_eq!(
+        cells.len(),
+        0,
+        "completed agent command should stay in the active group, not flush"
     );
-    assert!(blob.to_lowercase().contains("bloop"), "expected error text");
+    let active = active_blob(&chat);
+    assert!(
+        active.contains("Ran 1 shell command"),
+        "expected collapsed summary: {active:?}"
+    );
+    assert!(
+        active.contains("(1 failed)"),
+        "expected failure count in the summary: {active:?}"
+    );
+    // The failing command and its error output are surfaced beneath the summary.
+    assert!(
+        active.to_lowercase().contains("bloop"),
+        "expected error text in the failure detail: {active:?}"
+    );
 }
 
 #[tokio::test]
@@ -374,27 +392,45 @@ async fn exec_end_without_begin_uses_event_command() {
         },
     );
 
+    // With no active cell, the orphan end seeds a new groupable cell that accumulates rather than
+    // flushing immediately.
     let cells = drain_insert_history(&mut rx);
-    assert_eq!(cells.len(), 1, "expected finalized exec cell to flush");
-    let blob = lines_to_single_string(&cells[0]);
+    assert_eq!(
+        cells.len(),
+        0,
+        "orphan end with no active cell should seed the active group, not flush"
+    );
+    let active = active_blob(&chat);
     assert!(
-        blob.contains("• Ran echo orphaned"),
-        "expected command text to come from event: {blob:?}"
+        active.contains("Ran 1 shell command"),
+        "expected collapsed summary: {active:?}"
     );
     assert!(
-        !blob.contains("call-orphan"),
-        "call id should not be rendered when event has the command: {blob:?}"
+        !active.contains("call-orphan"),
+        "call id should not be rendered when event has the command: {active:?}"
+    );
+    // The command text still comes from the event payload and remains visible in the transcript
+    // overlay even though the collapsed summary hides it.
+    let transcript = chat
+        .transcript
+        .active_cell
+        .as_ref()
+        .map(|cell| lines_to_single_string(&cell.transcript_lines(/*width*/ 80)))
+        .unwrap_or_default();
+    assert!(
+        transcript.contains("echo orphaned"),
+        "expected command text to come from event: {transcript:?}"
     );
 }
 
 #[tokio::test]
-async fn exec_end_without_begin_does_not_flush_unrelated_running_exploring_cell() {
+async fn orphan_completed_call_merges_into_active_exploring_cell() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
 
     begin_exec(&mut chat, "call-exploring", "cat /dev/null");
     assert!(drain_insert_history(&mut rx).is_empty());
-    assert!(active_blob(&chat).contains("Read null"));
+    assert!(active_blob(&chat).contains("Reading 1 file"));
 
     let orphan =
         begin_unified_exec_startup(&mut chat, "call-orphan", "proc-1", "echo repro-marker");
@@ -408,64 +444,56 @@ async fn exec_end_without_begin_does_not_flush_unrelated_running_exploring_cell(
         /*exit_code*/ 0,
     );
 
+    // The orphan completed call folds into the still-active exploring group so consecutive activity
+    // stays collapsed into one summary instead of spawning a standalone entry.
     let cells = drain_insert_history(&mut rx);
-    assert_eq!(cells.len(), 1, "only the orphan end should be inserted");
-    let orphan_blob = lines_to_single_string(&cells[0]);
     assert!(
-        orphan_blob.contains("• Ran echo repro-marker"),
-        "expected orphan end to render a standalone entry: {orphan_blob:?}"
+        cells.is_empty(),
+        "orphan end should merge into the active group, not flush a standalone entry"
     );
     let active = active_blob(&chat);
     assert!(
-        active.contains("• Exploring"),
-        "expected unrelated exploring call to remain active: {active:?}"
+        active.contains("Reading 1 file"),
+        "expected exploring activity retained: {active:?}"
     );
     assert!(
-        active.contains("Read null"),
-        "expected active exploring command to remain visible: {active:?}"
-    );
-    assert!(
-        !active.contains("echo repro-marker"),
-        "orphaned end should not replace the active exploring cell: {active:?}"
+        active.contains("running 1 shell command"),
+        "expected merged shell command reflected in the summary: {active:?}"
     );
 }
 
 #[tokio::test]
-async fn exec_end_without_begin_flushes_completed_unrelated_exploring_cell() {
+async fn orphan_completed_call_merges_into_completed_exploring_group() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.on_task_started();
 
     let begin_ls = begin_exec(&mut chat, "call-ls", "ls -la");
     end_exec(&mut chat, begin_ls, "", "", /*exit_code*/ 0);
     assert!(drain_insert_history(&mut rx).is_empty());
-    assert!(active_blob(&chat).contains("ls -la"));
+    assert!(active_blob(&chat).contains("Listed 1 directory"));
 
     let orphan = begin_unified_exec_startup(&mut chat, "call-after", "proc-1", "echo after");
     end_exec(&mut chat, orphan, "after\n", "", /*exit_code*/ 0);
 
+    // The exploring group has completed but not yet flushed, so the consecutive orphan command
+    // folds into it rather than starting a separate entry.
     let cells = drain_insert_history(&mut rx);
-    assert_eq!(
-        cells.len(),
-        2,
-        "completed exploring cell should flush before the orphan entry"
-    );
-    let first = lines_to_single_string(&cells[0]);
-    let second = lines_to_single_string(&cells[1]);
     assert!(
-        first.contains("• Explored"),
-        "expected flushed exploring cell: {first:?}"
+        cells.is_empty(),
+        "orphan end should merge into the pending group, not flush"
+    );
+    let active = active_blob(&chat);
+    assert!(
+        active.contains("Listed 1 directory"),
+        "expected list activity retained: {active:?}"
     );
     assert!(
-        first.contains("List ls -la"),
-        "expected flushed exploring cell: {first:?}"
+        active.contains("ran 1 shell command"),
+        "expected merged shell command reflected in the summary: {active:?}"
     );
     assert!(
-        second.contains("• Ran echo after"),
-        "expected orphan end entry after flush: {second:?}"
-    );
-    assert!(
-        chat.transcript.active_cell.is_none(),
-        "both entries should be finalized"
+        chat.transcript.active_cell.is_some(),
+        "the merged group stays active until an external flush"
     );
 }
 
@@ -486,16 +514,16 @@ async fn overlapping_exploring_exec_end_is_not_misclassified_as_orphan() {
     );
     let active = active_blob(&chat);
     assert!(
-        active.contains("List ls -la"),
+        active.contains("Listing 1 directory"),
         "expected first command still grouped: {active:?}"
     );
     assert!(
-        active.contains("Read foo.txt"),
+        active.contains("reading 1 file"),
         "expected second running command to stay in the same active cell: {active:?}"
     );
     assert!(
-        active.contains("• Exploring"),
-        "expected grouped exploring header to remain active: {active:?}"
+        active.contains("foo.txt"),
+        "expected the running command target to remain visible: {active:?}"
     );
 
     end_exec(&mut chat, begin_cat, "hello\n", "", /*exit_code*/ 0);
@@ -525,12 +553,18 @@ async fn exec_history_shows_unified_exec_startup_commands() {
         /*exit_code*/ 0,
     );
 
+    // Unified-exec startup commands are groupable agent activity, so they accumulate rather than
+    // flushing one entry per command.
     let cells = drain_insert_history(&mut rx);
-    assert_eq!(cells.len(), 1, "expected finalized exec cell to flush");
-    let blob = lines_to_single_string(&cells[0]);
+    assert_eq!(
+        cells.len(),
+        0,
+        "groupable startup command should accumulate, not flush"
+    );
+    let active = active_blob(&chat);
     assert!(
-        blob.contains("• Ran echo unified exec startup"),
-        "expected startup command to render: {blob:?}"
+        active.contains("Ran 1 shell command"),
+        "expected collapsed startup summary: {active:?}"
     );
 }
 
@@ -548,7 +582,7 @@ async fn exec_history_shows_unified_exec_tool_calls() {
     end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
 
     let blob = active_blob(&chat);
-    assert_eq!(blob, "• Explored\n  └ List ls\n");
+    assert_eq!(blob, "  Listed 1 directory\n");
 }
 
 #[tokio::test]

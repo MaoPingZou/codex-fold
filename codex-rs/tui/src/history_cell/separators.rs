@@ -25,7 +25,7 @@ impl FinalMessageSeparator {
     }
 }
 impl HistoryCell for FinalMessageSeparator {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
         let mut label_parts = Vec::new();
         if let Some(elapsed_seconds) = self
             .elapsed_seconds
@@ -38,19 +38,14 @@ impl HistoryCell for FinalMessageSeparator {
             label_parts.push(metrics_label);
         }
 
+        // No horizontal rule between turns: rely on the normal single blank line that history
+        // insertion already places between cells. Only surface the (rare) worked-for / metrics
+        // label as plain dim text, without any `─` divider characters.
         if label_parts.is_empty() {
-            return vec![Line::from_iter(["─".repeat(width as usize).dim()])];
+            Vec::new()
+        } else {
+            vec![Line::from(label_parts.join(" • ")).dim()]
         }
-
-        let label = format!("─ {} ─", label_parts.join(" • "));
-        let (label, _suffix, label_width) = take_prefix_by_width(&label, width as usize);
-        vec![
-            Line::from_iter([
-                label,
-                "─".repeat((width as usize).saturating_sub(label_width)),
-            ])
-            .dim(),
-        ]
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {

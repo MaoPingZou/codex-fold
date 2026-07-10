@@ -192,10 +192,72 @@ fn activity_marker(start_time: Option<Instant>, animations_enabled: bool) -> Spa
     .unwrap_or_else(|| "•".dim())
 }
 
+/// The kinds of activity a collapsed exec summary can report, in the order categories are first
+/// encountered across a cell's calls.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SummaryCategory {
+    Shell,
+    Read,
+    Search,
+    List,
+}
+
+impl SummaryCategory {
+    /// Builds a lowercase phrase like `ran 2 shell commands` or `searching for 1 pattern`. The
+    /// caller capitalizes the first phrase of the joined summary.
+    fn phrase(self, n: usize, active: bool) -> String {
+        match self {
+            SummaryCategory::Shell => format!(
+                "{} {n} shell command{}",
+                if active { "running" } else { "ran" },
+                if n == 1 { "" } else { "s" },
+            ),
+            SummaryCategory::Read => format!(
+                "{} {n} file{}",
+                if active { "reading" } else { "read" },
+                if n == 1 { "" } else { "s" },
+            ),
+            SummaryCategory::Search => format!(
+                "{} {n} pattern{}",
+                if active { "searching for" } else { "searched for" },
+                if n == 1 { "" } else { "s" },
+            ),
+            SummaryCategory::List => format!(
+                "{} {n} director{}",
+                if active { "listing" } else { "listed" },
+                if n == 1 { "y" } else { "ies" },
+            ),
+        }
+    }
+}
+
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+fn truncate_to_width(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    if max_chars <= 1 {
+        return "…".to_string();
+    }
+    let mut out: String = s.chars().take(max_chars - 1).collect();
+    out.push('…');
+    out
+}
+
 impl HistoryCell for ExecCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        if self.is_exploring_cell() {
-            self.exploring_display_lines(width)
+        // Agent tool calls (reads, searches, lists and shell commands) accumulate into a single
+        // groupable cell and render as a collapsed count summary (e.g. "Ran 2 shell commands").
+        // User-shell ("You ran") and unified-exec cells keep their legacy per-command rendering.
+        if self.is_groupable_cell() {
+            self.summary_display_lines(width)
         } else {
             self.command_display_lines(width)
         }
@@ -259,107 +321,177 @@ impl ExecCell {
         Line::from(vec![Self::output_ellipsis_text(omitted).dim()])
     }
 
-    fn exploring_display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let mut out: Vec<Line<'static>> = Vec::new();
-        out.push(Line::from(vec![
-            if self.is_active() {
-                activity_marker(self.active_start_time(), self.animations_enabled())
-            } else {
-                "•".dim()
-            },
-            " ".into(),
-            if self.is_active() {
-                "Exploring".bold()
-            } else {
-                "Explored".bold()
-            },
-        ]));
+    /// Renders a groupable (agent) exec cell as a single collapsed count summary such as
+    /// `• Ran 2 shell commands` or `• Searched for 1 pattern, ran 2 shell commands`. Command
+    /// output is never shown here — the full transcript remains available via `ctrl + t`.
+    fn summary_display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let active = self.is_active();
+        let counts = self.summarize_calls();
 
-        let mut calls = self.calls.clone();
-        let mut out_indented = Vec::new();
-        while !calls.is_empty() {
-            let mut call = calls.remove(0);
-            if call
-                .parsed
+        let summary = if counts.is_empty() {
+            // Fallback for the (unexpected) empty case so the cell is never blank.
+            if active { "Running".to_string() } else { "Ran".to_string() }
+        } else {
+            let joined = counts
                 .iter()
-                .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }))
-            {
-                while let Some(next) = calls.first() {
-                    if next
-                        .parsed
-                        .iter()
-                        .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }))
-                    {
-                        call.parsed.extend(next.parsed.clone());
-                        calls.remove(0);
-                    } else {
-                        break;
-                    }
+                .map(|(cat, n)| cat.phrase(*n, active))
+                .collect::<Vec<_>>()
+                .join(", ");
+            capitalize_first(&joined)
+        };
+
+        let failed = self
+            .calls
+            .iter()
+            .filter(|c| c.output.as_ref().is_some_and(|o| o.exit_code != 0))
+            .count();
+
+        // Collapsed summaries are intentionally low-key: dim text with no leading bullet, indented
+        // by two columns so they line up with the body text of bulleted message cells.
+        let mut header: Vec<Span<'static>> = vec!["  ".into(), summary.dim()];
+        if active {
+            header.push("…".dim());
+        }
+        if failed > 0 {
+            header.push(format!(" ({failed} failed)").red());
+        }
+        let mut out: Vec<Line<'static>> = vec![Line::from(header)];
+
+        // While active, show the item currently being worked on so the user still knows what is
+        // running (e.g. the file being read or the command being executed).
+        if active
+            && let Some(current) = self.current_activity_target()
+        {
+            let available = (width as usize).saturating_sub(4).max(1);
+            let target = truncate_to_width(&current, available);
+            out.extend(prefix_lines(
+                vec![Line::from(target.dim())],
+                "  └ ".dim(),
+                "    ".into(),
+            ));
+        }
+
+        // Surface what actually failed so `(N failed)` is actionable: the failing command plus a
+        // short tail of its error output, rather than leaving the user to guess.
+        out.extend(self.failed_detail_lines(width));
+
+        out
+    }
+
+    /// Builds detail rows for every call that exited non-zero: the command (truncated) with its exit
+    /// code, followed by the last couple of non-empty output lines (usually stderr). Kept short so a
+    /// collapsed summary stays compact even when something failed.
+    fn failed_detail_lines(&self, width: u16) -> Vec<Line<'static>> {
+        const MAX_ERR_LINES: usize = 3;
+        let available = (width as usize).saturating_sub(4).max(1);
+        let mut out: Vec<Line<'static>> = Vec::new();
+        for call in self
+            .calls
+            .iter()
+            .filter(|c| c.output.as_ref().is_some_and(|o| o.exit_code != 0))
+        {
+            let exit = call.output.as_ref().map(|o| o.exit_code).unwrap_or_default();
+            let cmd = strip_bash_lc_and_escape(&call.command);
+            let cmd_first = cmd.lines().next().unwrap_or(cmd.as_str());
+            let cmd_disp = truncate_to_width(cmd_first, available.saturating_sub(12).max(1));
+            out.push(Line::from(vec![
+                "  └ ".dim(),
+                cmd_disp.red(),
+                format!(" (exit {exit})").red().dim(),
+            ]));
+
+            if let Some(output) = call.output.as_ref() {
+                let err_lines: Vec<&str> = output
+                    .aggregated_output
+                    .lines()
+                    .map(str::trim_end)
+                    .filter(|l| !l.trim().is_empty())
+                    .collect();
+                let start = err_lines.len().saturating_sub(MAX_ERR_LINES);
+                for raw in &err_lines[start..] {
+                    let disp = truncate_to_width(raw.trim_start(), available);
+                    out.push(Line::from(vec![
+                        "    ".into(),
+                        Span::from(disp).red().dim(),
+                    ]));
                 }
             }
+        }
+        out
+    }
 
-            let reads_only = call
-                .parsed
-                .iter()
-                .all(|parsed| matches!(parsed, ParsedCommand::Read { .. }));
+    /// Aggregates the cell's calls into ordered `(category, count)` pairs, preserving the order in
+    /// which each category first appears.
+    fn summarize_calls(&self) -> Vec<(SummaryCategory, usize)> {
+        let mut order: Vec<SummaryCategory> = Vec::new();
+        let note = |order: &mut Vec<SummaryCategory>, cat: SummaryCategory| {
+            if !order.contains(&cat) {
+                order.push(cat);
+            }
+        };
 
-            let call_lines: Vec<(&str, Vec<Span<'static>>)> = if reads_only {
-                let names = call
-                    .parsed
-                    .iter()
-                    .map(|parsed| match parsed {
-                        ParsedCommand::Read { name, .. } => name.clone(),
-                        _ => unreachable!(),
-                    })
-                    .unique();
-                vec![(
-                    "Read",
-                    Itertools::intersperse(names.into_iter().map(Into::into), ", ".dim()).collect(),
-                )]
-            } else {
-                let mut lines = Vec::new();
+        let mut shell = 0usize;
+        let mut read_names: Vec<String> = Vec::new();
+        let mut searches = 0usize;
+        let mut lists = 0usize;
+
+        for call in &self.calls {
+            if ExecCell::is_exploring_call(call) {
                 for parsed in &call.parsed {
                     match parsed {
                         ParsedCommand::Read { name, .. } => {
-                            lines.push(("Read", vec![name.clone().into()]));
+                            note(&mut order, SummaryCategory::Read);
+                            read_names.push(name.clone());
                         }
-                        ParsedCommand::ListFiles { cmd, path } => {
-                            lines.push(("List", vec![path.clone().unwrap_or(cmd.clone()).into()]));
+                        ParsedCommand::Search { .. } => {
+                            note(&mut order, SummaryCategory::Search);
+                            searches += 1;
                         }
-                        ParsedCommand::Search { cmd, query, path } => {
-                            let spans = match (query, path) {
-                                (Some(q), Some(p)) => {
-                                    vec![q.clone().into(), " in ".dim(), p.clone().into()]
-                                }
-                                (Some(q), None) => vec![q.clone().into()],
-                                _ => vec![cmd.clone().into()],
-                            };
-                            lines.push(("Search", spans));
+                        ParsedCommand::ListFiles { .. } => {
+                            note(&mut order, SummaryCategory::List);
+                            lists += 1;
                         }
-                        ParsedCommand::Unknown { cmd } => {
-                            lines.push(("Run", vec![cmd.clone().into()]));
-                        }
+                        ParsedCommand::Unknown { .. } => {}
                     }
                 }
-                lines
-            };
-
-            for (title, line) in call_lines {
-                let line = Line::from(line);
-                let initial_indent = Line::from(vec![title.cyan(), " ".into()]);
-                let subsequent_indent = " ".repeat(initial_indent.width()).into();
-                let wrapped = adaptive_wrap_line(
-                    &line,
-                    RtOptions::new(width as usize)
-                        .initial_indent(initial_indent)
-                        .subsequent_indent(subsequent_indent),
-                );
-                push_owned_lines(&wrapped, &mut out_indented);
+            } else {
+                note(&mut order, SummaryCategory::Shell);
+                shell += 1;
             }
         }
 
-        out.extend(prefix_lines(out_indented, "  └ ".dim(), "    ".into()));
-        out
+        let files = read_names.into_iter().unique().count();
+        order
+            .into_iter()
+            .filter_map(|cat| {
+                let n = match cat {
+                    SummaryCategory::Shell => shell,
+                    SummaryCategory::Read => files,
+                    SummaryCategory::Search => searches,
+                    SummaryCategory::List => lists,
+                };
+                (n > 0).then_some((cat, n))
+            })
+            .collect()
+    }
+
+    /// Returns a short label describing the call currently in progress (still awaiting output).
+    fn current_activity_target(&self) -> Option<String> {
+        let call = self.calls.iter().find(|c| c.output.is_none())?;
+        if ExecCell::is_exploring_call(call) {
+            call.parsed.iter().rev().find_map(|parsed| match parsed {
+                ParsedCommand::Read { name, .. } => Some(name.clone()),
+                ParsedCommand::Search { query, cmd, .. } => {
+                    Some(query.clone().unwrap_or_else(|| cmd.clone()))
+                }
+                ParsedCommand::ListFiles { path, cmd } => {
+                    Some(path.clone().unwrap_or_else(|| cmd.clone()))
+                }
+                ParsedCommand::Unknown { cmd } => Some(cmd.clone()),
+            })
+        } else {
+            Some(strip_bash_lc_and_escape(&call.command))
+        }
     }
 
     fn command_display_lines(&self, width: u16) -> Vec<Line<'static>> {
@@ -987,7 +1119,7 @@ mod tests {
     }
 
     #[test]
-    fn exploring_display_does_not_split_long_url_like_search_query() {
+    fn active_search_target_collapses_to_single_line() {
         let url_like = "example.test/api/v1/projects/alpha-team/releases/2026-02-17/builds/1234567890/artifacts/reports/performance/summary/detail/with/a/very/long/path";
         let call = ExecCall {
             call_id: "call-id".to_string(),
@@ -1005,24 +1137,34 @@ mod tests {
         };
 
         let cell = ExecCell::new(call, /*animations_enabled*/ false);
+        let width: u16 = 36;
         let rendered: Vec<String> = cell
-            .display_lines(/*width*/ 36)
+            .display_lines(width)
             .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
+            .map(render_line_text)
             .collect();
 
-        assert_eq!(
+        // The collapsed summary names the search category.
+        assert!(
             rendered
-                .iter()
-                .filter(|line| line.contains(url_like))
-                .count(),
+                .first()
+                .is_some_and(|line| line.contains("Searching for 1 pattern")),
+            "expected a search count summary, got: {rendered:?}"
+        );
+        // The in-progress target is truncated to a single line that fits the width, rather than
+        // wrapping the long query across several rows.
+        let target_lines: Vec<&String> = rendered
+            .iter()
+            .filter(|line| line.trim_start().starts_with('└'))
+            .collect();
+        assert_eq!(
+            target_lines.len(),
             1,
-            "expected full URL-like query in one rendered line, got: {rendered:?}"
+            "expected exactly one truncated target line, got: {rendered:?}"
+        );
+        assert!(
+            UnicodeWidthStr::width(target_lines[0].as_str()) <= width as usize,
+            "expected target line to fit the width, got: {rendered:?}"
         );
     }
 

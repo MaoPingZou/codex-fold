@@ -1,0 +1,84 @@
+name: Sync upstream
+
+# 定时把上游 openai/codex:main 合并进本 fork 的 main，同时保留本地定制提交。
+# - 能干净合并：自动推送 main。
+# - 出现冲突：中止合并（绝不覆盖定制），workflow 失败并开 / 更新一个提醒 issue。
+# 也可在 Actions 页面手动触发（workflow_dispatch）。
+
+on:
+  schedule:
+    - cron: "0 16 * * *" # 每天 UTC 16:00 = 北京时间次日 00:00
+  workflow_dispatch: {}
+
+# 允许推送 main 与创建提醒 issue。
+permissions:
+  contents: write
+  issues: write
+
+# 避免定时与手动触发并发跑同一分支。
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/openai/codex.git
+  UPSTREAM_BRANCH: main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork main (完整历史，合并需要共同祖先)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch --no-tags upstream "$UPSTREAM_BRANCH"
+
+      - name: Merge upstream into main (保留定制)
+        id: merge
+        run: |
+          set -e
+          before="$(git rev-parse HEAD)"
+          if git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+            after="$(git rev-parse HEAD)"
+            if [ "$before" = "$after" ]; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "✅ 已是最新，无需合并。"
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "✅ 已合并上游更新，准备推送。"
+            fi
+          else
+            echo "⚠️ 检测到冲突，中止合并（未改动 main、未触碰定制）。"
+            git merge --abort
+            exit 1
+          fi
+
+      - name: Push updated main
+        if: steps.merge.outputs.changed == 'true'
+        run: git push origin HEAD:main
+
+      - name: Open / refresh conflict issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="⚠️ 上游同步冲突：openai/codex 需人工合并"
+          body=$'自动同步 `openai/codex:main` 时出现合并冲突，已中止合并、**未改动 main、未触碰你的定制**。\n\n请在本地手动合并并解决冲突：\n\n```bash\ngit remote add upstream https://github.com/openai/codex.git  # 若尚未添加\ngit fetch upstream main\ngit merge upstream/main\n# 解决冲突后：\ngit commit\ngit push origin main\n```'
+          existing="$(gh issue list --state open --json number,title \
+            --jq ".[] | select(.title==\"$title\") | .number" | head -1)"
+          if [ -z "$existing" ]; then
+            gh issue create --title "$title" --body "$body"
+          else
+            gh issue comment "$existing" --body "🔁 又一次自动同步失败（$(date -u +%FT%TZ)），冲突仍未解决。"
+          fi

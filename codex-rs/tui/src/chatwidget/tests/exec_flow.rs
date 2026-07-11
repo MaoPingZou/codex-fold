@@ -352,14 +352,15 @@ async fn exec_history_cell_shows_working_then_failed() {
         active.contains("Ran 1 shell command"),
         "expected collapsed summary: {active:?}"
     );
+    // Failures are intentionally not surfaced in the collapsed view: no failure count and no error
+    // output. The full command output is still available via the transcript overlay.
     assert!(
-        active.contains("(1 failed)"),
-        "expected failure count in the summary: {active:?}"
+        !active.contains("failed"),
+        "collapsed summary should not advertise failures: {active:?}"
     );
-    // The failing command and its error output are surfaced beneath the summary.
     assert!(
-        active.to_lowercase().contains("bloop"),
-        "expected error text in the failure detail: {active:?}"
+        !active.to_lowercase().contains("bloop"),
+        "collapsed summary should not print error output: {active:?}"
     );
 }
 

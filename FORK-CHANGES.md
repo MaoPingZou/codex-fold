@@ -10,9 +10,8 @@
 
 | 功能 | 文件 | 说明 |
 | --- | --- | --- |
-| 命令输出折叠为计数摘要 | `exec_cell/model.rs`、`exec_cell/render.rs` | 连续的 agent 工具调用（shell / read / search / list）聚合进同一个 cell，渲染成 `Ran 2 shell commands`、`Searched for 1 pattern, ran 2 shell commands` 这类单行摘要；命令的完整 stdout/stderr/diff 不再内联，只在 `ctrl + t` transcript 里查看。失败时行尾追加红色 `(N failed)`。 |
+| 命令输出折叠为计数摘要 | `exec_cell/model.rs`、`exec_cell/render.rs` | 连续的 agent 工具调用（shell / read / search / list）聚合进同一个 cell，渲染成 `Ran 2 shell commands`、`Searched for 1 pattern, ran 2 shell commands` 这类单行摘要；命令的完整 stdout/stderr/diff 不再内联，只在 `ctrl + t` transcript 里查看。失败信息也不在折叠视图里展示（不显示 `(N failed)`、不打印错误输出）——保持简洁，完整输出仍走 `ctrl + t`。 |
 | 并行/复合命令也合并 | `chatwidget/command_lifecycle.rs` | 复合 shell（如 `git status && git log`）被解析成 `Unknown`，走 unified-exec 早返回路径、没有 begin 事件；其 end 到达时改为合并进当前 agent 组（不再要求组内仍有命令在跑），避免"flush 重建"把连续活动切成多条 `Ran 1 shell command`。 |
-| 失败原因可见 | `exec_cell/render.rs` | `(N failed)` 下方补出每条失败命令（截断）+ 退出码 + 该命令错误输出末尾最多 3 行（通常是 stderr），红色低调显示；完整输出仍在 `ctrl + t`。 |
 | 多 agent `Started` 合并 | `multi_agents.rs`（`StartedAgentsCell`）、`chatwidget/tool_lifecycle.rs` | 连续的 `Started <agent>` 聚合成一条 `Started N agents` + 缩进路径列表；单个时仍显示 `Started \`/root/xxx\``。作为 active cell 累积，遇其它活动 / 助手消息自动 flush。 |
 | 摘要低调化 | `exec_cell/render.rs` | 摘要文本用暗灰（dim）、去掉前面的 `•`、缩进 2 格对齐消息正文。 |
 | 去掉 turn 之间的横线 | `history_cell/separators.rs`、`chatwidget/streaming.rs`、`chatwidget/turn_runtime.rs` | 不再画整宽 `─` 分隔线，靠 cell 间原有的单行空行分隔；罕见的 "Worked for / metrics" 标签保留为纯文本、不带短横。 |

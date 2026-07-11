@@ -2,5 +2,4 @@
 source: tui/src/chatwidget/tests/review_mode.rs
 expression: exec_blob
 ---
-  Ran 1 shell command (1 failed)
-  └ sleep 1 (exit 1)
+  Ran 1 shell command

@@ -2,7 +2,4 @@
 source: tui/src/history_cell/tests.rs
 expression: rendered
 ---
-  Ran 1 shell command (1 failed)
-  └ echo this_i… (exit 1)
-    error: first line on st…
-    error: second line on s…
+  Ran 1 shell command

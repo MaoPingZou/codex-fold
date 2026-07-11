@@ -348,20 +348,13 @@ impl ExecCell {
             capitalize_first(&joined)
         };
 
-        let failed = self
-            .calls
-            .iter()
-            .filter(|c| c.output.as_ref().is_some_and(|o| o.exit_code != 0))
-            .count();
-
         // Collapsed summaries are intentionally low-key: dim text with no leading bullet, indented
-        // by two columns so they line up with the body text of bulleted message cells.
+        // by two columns so they line up with the body text of bulleted message cells. Failures are
+        // deliberately not surfaced here (no `(N failed)` count, no error output) — the collapsed
+        // view stays clean and the full command output remains available via `ctrl + t`.
         let mut header: Vec<Span<'static>> = vec!["  ".into(), summary.dim()];
         if active {
             header.push("…".dim());
-        }
-        if failed > 0 {
-            header.push(format!(" ({failed} failed)").red());
         }
         let mut out: Vec<Line<'static>> = vec![Line::from(header)];
 
@@ -377,56 +370,6 @@ impl ExecCell {
             ));
         }
 
-        // Surface what actually failed so `(N failed)` is actionable: the failing command plus a
-        // short tail of its error output, rather than leaving the user to guess.
-        out.extend(self.failed_detail_lines(width));
-
-        out
-    }
-
-    /// Builds detail rows for every call that exited non-zero: the command (truncated) with its exit
-    /// code, followed by the last couple of non-empty output lines (usually stderr). Kept short so a
-    /// collapsed summary stays compact even when something failed.
-    fn failed_detail_lines(&self, width: u16) -> Vec<Line<'static>> {
-        const MAX_ERR_LINES: usize = 3;
-        let available = (width as usize).saturating_sub(4).max(1);
-        let mut out: Vec<Line<'static>> = Vec::new();
-        for call in self
-            .calls
-            .iter()
-            .filter(|c| c.output.as_ref().is_some_and(|o| o.exit_code != 0))
-        {
-            let exit = call
-                .output
-                .as_ref()
-                .map(|o| o.exit_code)
-                .unwrap_or_default();
-            let cmd = strip_bash_lc_and_escape(&call.command);
-            let cmd_first = cmd.lines().next().unwrap_or(cmd.as_str());
-            let cmd_disp = truncate_to_width(cmd_first, available.saturating_sub(12).max(1));
-            out.push(Line::from(vec![
-                "  └ ".dim(),
-                cmd_disp.red(),
-                format!(" (exit {exit})").red().dim(),
-            ]));
-
-            if let Some(output) = call.output.as_ref() {
-                let err_lines: Vec<&str> = output
-                    .aggregated_output
-                    .lines()
-                    .map(str::trim_end)
-                    .filter(|l| !l.trim().is_empty())
-                    .collect();
-                let start = err_lines.len().saturating_sub(MAX_ERR_LINES);
-                for raw in &err_lines[start..] {
-                    let disp = truncate_to_width(raw.trim_start(), available);
-                    out.push(Line::from(vec![
-                        "    ".into(),
-                        Span::from(disp).red().dim(),
-                    ]));
-                }
-            }
-        }
         out
     }
 

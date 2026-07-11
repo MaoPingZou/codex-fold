@@ -634,14 +634,7 @@ impl McpInventoryLoadingCell {
 
 impl HistoryCell for McpInventoryLoadingCell {
     fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
-        vec![
-            vec![
-                "  ".into(),
-                "Loading MCP inventory".dim(),
-                "…".dim(),
-            ]
-            .into(),
-        ]
+        vec![vec!["  ".into(), "Loading MCP inventory".dim(), "…".dim()].into()]
     }
 
     fn raw_lines(&self) -> Vec<Line<'static>> {

@@ -931,10 +931,23 @@ mod tests {
         // The collapsed activity style renders the whole title uniformly dim: the agent details are
         // still present, but the previous accent colors (cyan nickname, magenta model) and bold are
         // intentionally dropped for a low-key look.
-        let text: String = title.spans.iter().map(|span| span.content.as_ref()).collect();
-        assert!(text.contains("Robie"), "expected nickname in title, got: {text:?}");
-        assert!(text.contains("[explorer]"), "expected role in title, got: {text:?}");
-        assert!(text.contains("(gpt-5 high)"), "expected model in title, got: {text:?}");
+        let text: String = title
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(
+            text.contains("Robie"),
+            "expected nickname in title, got: {text:?}"
+        );
+        assert!(
+            text.contains("[explorer]"),
+            "expected role in title, got: {text:?}"
+        );
+        assert!(
+            text.contains("(gpt-5 high)"),
+            "expected model in title, got: {text:?}"
+        );
         for span in &title.spans {
             assert_eq!(
                 span.style.fg, None,

@@ -219,7 +219,11 @@ impl SummaryCategory {
             ),
             SummaryCategory::Search => format!(
                 "{} {n} pattern{}",
-                if active { "searching for" } else { "searched for" },
+                if active {
+                    "searching for"
+                } else {
+                    "searched for"
+                },
                 if n == 1 { "" } else { "s" },
             ),
             SummaryCategory::List => format!(
@@ -330,7 +334,11 @@ impl ExecCell {
 
         let summary = if counts.is_empty() {
             // Fallback for the (unexpected) empty case so the cell is never blank.
-            if active { "Running".to_string() } else { "Ran".to_string() }
+            if active {
+                "Running".to_string()
+            } else {
+                "Ran".to_string()
+            }
         } else {
             let joined = counts
                 .iter()
@@ -359,9 +367,7 @@ impl ExecCell {
 
         // While active, show the item currently being worked on so the user still knows what is
         // running (e.g. the file being read or the command being executed).
-        if active
-            && let Some(current) = self.current_activity_target()
-        {
+        if active && let Some(current) = self.current_activity_target() {
             let available = (width as usize).saturating_sub(4).max(1);
             let target = truncate_to_width(&current, available);
             out.extend(prefix_lines(
@@ -390,7 +396,11 @@ impl ExecCell {
             .iter()
             .filter(|c| c.output.as_ref().is_some_and(|o| o.exit_code != 0))
         {
-            let exit = call.output.as_ref().map(|o| o.exit_code).unwrap_or_default();
+            let exit = call
+                .output
+                .as_ref()
+                .map(|o| o.exit_code)
+                .unwrap_or_default();
             let cmd = strip_bash_lc_and_escape(&call.command);
             let cmd_first = cmd.lines().next().unwrap_or(cmd.as_str());
             let cmd_disp = truncate_to_width(cmd_first, available.saturating_sub(12).max(1));

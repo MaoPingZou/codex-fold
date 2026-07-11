@@ -160,12 +160,10 @@ impl ChatWidget {
         {
             let agent_path = agent_path.clone();
             self.flush_answer_stream_with_separator();
-            if let Some(cell) = self
-                .transcript
-                .active_cell
-                .as_mut()
-                .and_then(|c| c.as_any_mut().downcast_mut::<multi_agents::StartedAgentsCell>())
-            {
+            if let Some(cell) = self.transcript.active_cell.as_mut().and_then(|c| {
+                c.as_any_mut()
+                    .downcast_mut::<multi_agents::StartedAgentsCell>()
+            }) {
                 cell.push(agent_path);
                 self.bump_active_cell_revision();
             } else {

@@ -19,28 +19,39 @@
 | 用户消息去上下内边距 | `history_cell/messages.rs` | 去掉灰底时代遗留的上下空行内边距。 |
 | 输入框上方紧凑 | `bottom_pane/chat_composer.rs` | 去掉输入行上方的空行（top inset 1→0、`Min(3)→Min(2)`、高度常量 `+2→+1`）。 |
 
-> ⚠️ 折叠改变了 flush 时机：完成的 agent 命令不再逐条滚入历史，而是留在底部累积，等助手开始说话 / 回合结束时提交为 `Ran N shell commands`。因此 `codex-rs/tui/src/chatwidget/tests/` 里若干断言旧渲染/旧时机的用例会失败——**不影响运行**，尚未更新。
+> 注：折叠改变了 flush 时机——完成的 agent 命令不再逐条滚入历史，而是留在底部累积，等助手开始说话 / 回合结束时提交为 `Ran N shell commands`。相关断言与 insta 快照已按新契约更新，`cargo test -p codex-tui` 全绿。
 
 ## 构建与安装
 
 本机（8GB 内存）用 **debug** 构建：release 开了 `lto = "thin"`，链接峰值内存会 OOM 被杀。debug 版功能一致，仅启动略慢，TUI 使用无感。
 
-一键重建脚本（改完源码后运行即可）：
+一键重建脚本 `~/.local/bin/rebuild-codex-fold`（改完源码后运行即可）：
 
 ```bash
-rebuild-codex-fold
+rebuild-codex-fold          # 仅编译当前本地源码并安装（不动上游）
+rebuild-codex-fold --sync   # 先合并上游 openai/codex:main（冲突则中止），再编译安装
 ```
 
-脚本位于 `~/.local/bin/rebuild-codex-fold`，等价于：
+脚本核心步骤：可选 `git merge upstream/main` → `cargo build --bin codex -j 4` →
+`cp target/debug/codex ~/.local/bin/codex-fold-bin` → `codesign --force --sign -`
+（必须重签，否则复制后被 macOS SIGKILL / 退出码 137）→ 幂等写入启动 wrapper。
 
-```bash
-source "$HOME/.cargo/env"
-cargo build --bin codex -j 4 --manifest-path <此仓库>/codex-rs/Cargo.toml
-cp <此仓库>/codex-rs/target/debug/codex ~/.local/bin/codex-fold
-codesign --force --sign - ~/.local/bin/codex-fold   # 必须重签，否则复制后被 macOS SIGKILL（退出码 137）
-```
+### 启动 wrapper 与上游更新提示
 
-`~/.local/bin` 已在 PATH 中，所以直接运行 `codex-fold` 即可（新开终端或 `hash -r` 生效）。官方 `codex`（npm 版）保持不变、互不影响。
+`~/.local/bin/codex-fold` 不是二进制本体，而是一个 **wrapper 脚本**（真正的二进制装为
+`codex-fold-bin`）。每次运行 `codex-fold` 时：
+
+1. **零延迟**直接启动 `codex-fold-bin`（透传所有参数与退出码）；
+2. 同时在**后台**异步 `git fetch upstream main` 并计算 `main..upstream/main` 落后数，写入
+   `~/.cache/codex-fold/upstream-behind`（不阻塞启动、不打扰 TUI）；
+3. 本次退出后（已回到主屏幕），若上一次检查发现上游有新提交，打印一行黄色提示，
+   建议运行 `rebuild-codex-fold --sync` 更新。
+
+即：**同步代码 ≠ 更新二进制**——二进制必须重新编译（分钟级）才生效，所以编译不塞进
+启动路径；启动只做几秒的轻量检查 + 退出提示，何时承受编译成本由你决定。
+
+`~/.local/bin` 已在 PATH 中，直接运行 `codex-fold` 即可（新开终端或 `hash -r` 生效）。
+官方 `codex`（npm 版）保持不变、互不影响。
 
 ## 环境
 

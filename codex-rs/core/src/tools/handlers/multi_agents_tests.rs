@@ -468,6 +468,41 @@ async fn multi_agent_v2_spawn_defaults_to_full_fork_and_rejects_child_model_over
 }
 
 #[tokio::test]
+async fn multi_agent_v2_spawn_rejects_child_model_from_different_backend() {
+    let (session, mut turn) = make_session_and_context().await;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    set_turn_config(&mut turn, config);
+
+    let err = SpawnAgentHandlerV2::default()
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "inspect this repo",
+                "task_name": "incompatible_model",
+                "model": "gpt-5.4",
+                "fork_turns": "none"
+            })),
+        ))
+        .await
+        .err()
+        .expect("model from a different multi-agent backend should be rejected");
+
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "Unknown model `gpt-5.4` for spawn_agent. Available models: gpt-5.6-sol, gpt-5.6-terra"
+                .to_string()
+        )
+    );
+}
+
+#[tokio::test]
 async fn spawn_agent_service_tier_override_validates_the_effective_child_model() {
     #[derive(Debug, Deserialize)]
     struct SpawnAgentResult {
@@ -4258,9 +4293,11 @@ async fn tool_handlers_cascade_close_and_resume_and_keep_explicitly_closed_subtr
         .enable(Feature::Sqlite)
         .expect("test config should allow sqlite");
     let state_db = init_state_db(&config).await;
+    let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
     let manager = ThreadManager::new(
         &config,
-        AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy")),
+        auth_manager.clone(),
+        crate::thread_manager::build_models_manager(&config, auth_manager),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         empty_extension_registry(),

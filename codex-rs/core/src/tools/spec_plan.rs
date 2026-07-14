@@ -582,6 +582,8 @@ fn code_mode_namespace_descriptions(
 
 #[instrument(level = "trace", skip_all)]
 fn add_tool_sources(context: &CoreToolPlanContext<'_>, planned_tools: &mut PlannedTools) {
+    // Guardian reviewers receive only `exec_command`, `write_stdin`, and `view_image`
+    // when an environment is available; all general tool sources stay excluded.
     if crate::guardian::is_guardian_reviewer_source(&context.step_context.turn.session_source) {
         let turn_context = context.step_context.turn.as_ref();
         let environment_mode = tool_environment_mode(context.step_context);
@@ -808,6 +810,11 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mu
                             .config
                             .multi_agent_v2
                             .hide_spawn_agent_metadata,
+                        expose_spawn_agent_model_overrides: turn_context
+                            .config
+                            .multi_agent_v2
+                            .expose_spawn_agent_model_overrides,
+                        multi_agent_version: turn_context.multi_agent_version,
                         usage_hint_text: turn_context.config.multi_agent_v2.usage_hint_text.clone(),
                     }),
                     tool_namespace,
@@ -850,6 +857,8 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mu
                     available_models: turn_context.available_models.clone(),
                     agent_type_description,
                     hide_agent_type_model_reasoning: false,
+                    expose_spawn_agent_model_overrides: true,
+                    multi_agent_version: turn_context.multi_agent_version,
                     usage_hint_text: turn_context.config.multi_agent_v2.usage_hint_text.clone(),
                 }),
                 exposure,

@@ -592,6 +592,7 @@ async fn zsh_fork_unified_exec_keeps_shell_parameter_when_remote_environment_ava
                     .expect("remote test environment"),
                 ),
                 remote_cwd,
+                Vec::new(),
                 /*shell*/ None,
             ),
         );
@@ -993,7 +994,7 @@ async fn request_plugin_install_stays_visible_without_tool_search() {
 }
 
 #[tokio::test]
-async fn request_plugin_install_description_refers_to_recommended_plugins_hint() {
+async fn request_plugin_install_description_requires_exhausting_tool_search() {
     let plan = probe_with(
         |turn| {
             set_features(
@@ -1018,7 +1019,11 @@ async fn request_plugin_install_description_refers_to_recommended_plugins_hint()
     else {
         panic!("expected request_plugin_install function spec");
     };
-    assert!(request_description.contains("the `<recommended_plugins>` list"));
+    assert!(request_description.contains("listed in `<recommended_plugins>`"));
+    assert!(request_description.contains("explicitly asks to use a specific plugin"));
+    assert!(request_description.contains("Tool search has already been exhausted"));
+    assert!(!request_description.contains("`tool_search`"));
+    assert!(request_description.contains("DO NOT call this tool in parallel with other tools"));
     assert!(!request_description.contains("list_available_plugins_to_install"));
     assert!(!request_description.contains("github"));
     assert!(has_parameter(request_spec, "plugin_id"));
@@ -1255,6 +1260,17 @@ async fn multi_agent_feature_selects_one_agent_tool_family() {
     else {
         panic!("expected spawn_agent in {MULTI_AGENT_V2_NAMESPACE} namespace");
     };
+    let spawn_agent_properties = spawn_agent
+        .parameters
+        .properties
+        .as_ref()
+        .expect("spawn_agent should use object params");
+    for property in ["model", "reasoning_effort"] {
+        assert!(spawn_agent_properties.contains_key(property));
+    }
+    for property in ["agent_type", "service_tier"] {
+        assert!(!spawn_agent_properties.contains_key(property));
+    }
     let spawn_agent_description = spawn_agent.description.as_str();
     assert!(!spawn_agent_description.contains("max_concurrent_threads_per_session"));
     assert!(spawn_agent_description.contains(

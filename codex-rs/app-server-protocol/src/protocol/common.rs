@@ -956,6 +956,13 @@ client_request_definitions! {
         serialization: global_shared_read("environment"),
         response: v2::EnvironmentInfoResponse,
     },
+    #[experimental("environment/status")]
+    /// Reads the current status of a configured execution environment.
+    EnvironmentStatus => "environment/status" {
+        params: v2::EnvironmentStatusParams,
+        serialization: global_shared_read("environment"),
+        response: v2::EnvironmentStatusResponse,
+    },
 
     McpServerOauthLogin => "mcpServer/oauth/login" {
         params: v2::McpServerOauthLoginParams,
@@ -1707,6 +1714,25 @@ server_notification_definitions! {
     #[strum(serialize = "account/login/completed")]
     AccountLoginCompleted(v2::AccountLoginCompletedNotification),
 
+}
+
+/// Server notification envelope sent over app-server transports.
+///
+/// `emitted_at_ms` records when app-server emitted the notification, before it
+/// is fanned out to individual connections.
+#[derive(Serialize, Deserialize, Debug, Clone, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerNotificationEnvelope {
+    #[serde(flatten)]
+    pub notification: ServerNotification,
+    /// Unix timestamp (in milliseconds) when app-server emitted this notification.
+    ///
+    /// Optional so clients can decode notifications from older app-server
+    /// versions. Current app-server versions always populate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub emitted_at_ms: Option<i64>,
 }
 
 client_notification_definitions! {

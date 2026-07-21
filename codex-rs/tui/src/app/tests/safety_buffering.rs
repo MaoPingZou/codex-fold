@@ -537,6 +537,9 @@ goals = true
     let mut replayed_history = String::new();
     while let Ok(event) = app_event_rx.try_recv() {
         if let AppEvent::InsertHistoryCell(cell) = event {
+            if !replayed_history.is_empty() {
+                replayed_history.push('\n');
+            }
             replayed_history.push_str(&lines_to_single_string(
                 &cell.transcript_lines(/*width*/ 80),
             ));

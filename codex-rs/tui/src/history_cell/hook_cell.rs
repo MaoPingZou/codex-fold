@@ -453,10 +453,21 @@ impl HookRunCell {
                 );
             }
             HookRunState::Completed { status, entries } => {
+                let system_message = entries
+                    .iter()
+                    .find(|entry| entry.kind == HookOutputEntryKind::Warning);
+                let mut system_message_lines = system_message.map(|entry| entry.text.split('\n'));
                 let status_text = format!("{status:?}").to_lowercase();
                 // Low-key activity style: no bullet, dim title, two-column indent. Failed/blocked/
-                // stopped hooks stay red so alerts remain visible.
-                let title = format!("{label} hook ({status_text})");
+                // stopped hooks stay red so alerts remain visible. Keep the warning's first line in
+                // the header so important hook output remains visible in a collapsed transcript.
+                let title = if let Some(first_line) =
+                    system_message_lines.as_mut().and_then(Iterator::next)
+                {
+                    format!("{label} hook ({status_text}): {first_line}")
+                } else {
+                    format!("{label} hook ({status_text})")
+                };
                 let title_span = match status {
                     HookRunStatus::Blocked | HookRunStatus::Failed | HookRunStatus::Stopped => {
                         title.red()
@@ -464,7 +475,19 @@ impl HookRunCell {
                     _ => title.dim(),
                 };
                 lines.push(vec!["  ".into(), title_span].into());
+                if let Some(system_message_lines) = system_message_lines {
+                    for line in system_message_lines {
+                        if line.is_empty() {
+                            lines.push("".into());
+                        } else {
+                            lines.push(format!("{HOOK_OUTPUT_BODY_INDENT}{line}").into());
+                        }
+                    }
+                }
                 for entry in entries {
+                    if entry.kind == HookOutputEntryKind::Warning {
+                        continue;
+                    }
                     if !render_full_context && entry.kind == HookOutputEntryKind::Context {
                         lines.extend(hook_context_preview_lines(&entry.text, width));
                     } else {
@@ -772,23 +795,6 @@ fn hook_run_is_quiet_success(run: &HookRunSummary) -> bool {
     run.status == HookRunStatus::Completed && run.entries.is_empty()
 }
 
-fn hook_completed_bullet(status: HookRunStatus, entries: &[HookOutputEntry]) -> Span<'static> {
-    match status {
-        HookRunStatus::Completed => {
-            if entries
-                .iter()
-                .any(|entry| entry.kind == HookOutputEntryKind::Warning)
-            {
-                "•".bold()
-            } else {
-                "•".green().bold()
-            }
-        }
-        HookRunStatus::Blocked | HookRunStatus::Failed | HookRunStatus::Stopped => "•".red().bold(),
-        HookRunStatus::Running => "•".into(),
-    }
-}
-
 fn hook_output_prefix(kind: HookOutputEntryKind) -> &'static str {
     match kind {
         HookOutputEntryKind::Warning => "warning: ",
@@ -821,21 +827,6 @@ mod tests {
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
-    use ratatui::style::Modifier;
-
-    #[test]
-    fn completed_hook_with_warning_uses_default_bold_bullet() {
-        let entries = vec![HookOutputEntry {
-            kind: HookOutputEntryKind::Warning,
-            text: "Heads up from the hook".to_string(),
-        }];
-
-        let bullet = hook_completed_bullet(HookRunStatus::Completed, &entries);
-
-        assert_eq!(bullet.content.as_ref(), "•");
-        assert_eq!(bullet.style.fg, None);
-        assert!(bullet.style.add_modifier.contains(Modifier::BOLD));
-    }
 
     #[test]
     fn completed_hook_short_multiline_context_preserves_display_transcript_and_raw_lines() {
@@ -934,9 +925,9 @@ mod tests {
     }
 
     #[test]
-    fn completed_hook_multiline_warning_prefixes_first_line_only() {
+    fn completed_stop_hook_multiline_system_message_prefixes_first_line_only() {
         let cell = completed_hook_cell(
-            HookEventName::PostToolUse,
+            HookEventName::Stop,
             HookRunStatus::Completed,
             vec![HookOutputEntry {
                 kind: HookOutputEntryKind::Warning,
@@ -947,8 +938,7 @@ mod tests {
         assert_eq!(
             line_texts(&cell.display_lines(/*width*/ 80)),
             vec![
-                "  PostToolUse hook (completed)".to_string(),
-                "  warning: Heads up".to_string(),
+                "  Stop hook (completed): Heads up".to_string(),
                 "    Review generated files".to_string(),
             ]
         );

@@ -240,7 +240,6 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_command_execution_started_now(&mut self, item: ThreadItem) {
-        self.record_visible_turn_activity();
         let ThreadItem::CommandExecution {
             id,
             command,
@@ -285,7 +284,7 @@ impl ChatWidget {
             .active_cell
             .as_mut()
             .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
-            && let Some(new_exec) = cell.with_added_call(
+            && cell.add_call(
                 id.clone(),
                 command.clone(),
                 parsed_cmd.clone(),
@@ -293,7 +292,6 @@ impl ChatWidget {
                 /*interaction_input*/ None,
             )
         {
-            *cell = new_exec;
             self.bump_active_cell_revision();
         } else {
             self.flush_active_cell();
@@ -398,13 +396,11 @@ impl ChatWidget {
         let output = if is_unified_exec_interaction {
             CommandOutput {
                 exit_code,
-                formatted_output: String::new(),
                 aggregated_output: String::new(),
             }
         } else {
             CommandOutput {
                 exit_code,
-                formatted_output: aggregated_output.clone(),
                 aggregated_output,
             }
         };
@@ -431,22 +427,25 @@ impl ChatWidget {
                 // Prefer merging the orphan completed call into the active exec cell so interleaved
                 // and parallel sub-agent commands aggregate into a single summary (e.g. "Ran 3
                 // shell commands") instead of many standalone "Ran 1 shell command" entries.
-                let merged = self
+                let merge_into_active_group = self
                     .transcript
                     .active_cell
-                    .as_mut()
-                    .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
-                    .is_some_and(|cell| {
-                        cell.push_completed_call(
-                            id.clone(),
-                            command.clone(),
-                            parsed.clone(),
-                            source,
-                            output.clone(),
-                            duration,
-                        )
-                    });
-                if merged {
+                    .as_ref()
+                    .and_then(|cell| cell.as_any().downcast_ref::<ExecCell>())
+                    .is_some_and(|cell| incoming_groupable && cell.is_groupable_cell());
+                if merge_into_active_group {
+                    let merged = self
+                        .transcript
+                        .active_cell
+                        .as_mut()
+                        .and_then(|cell| cell.as_any_mut().downcast_mut::<ExecCell>())
+                        .is_some_and(|cell| {
+                            cell.push_completed_call(id, command, parsed, source, output, duration)
+                        });
+                    debug_assert!(
+                        merged,
+                        "groupable active exec cell should accept completed call"
+                    );
                     self.bump_active_cell_revision();
                     self.request_redraw();
                 } else {

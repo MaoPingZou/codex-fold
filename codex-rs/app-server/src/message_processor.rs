@@ -263,6 +263,7 @@ impl MessageProcessor {
                 config.as_ref(),
                 auth_manager.clone(),
                 codex_core::build_models_manager(config.as_ref(), auth_manager.clone()),
+                codex_core::CodexAppsToolsCache::default(),
                 session_source,
                 environment_manager,
                 thread_extensions(
@@ -1146,6 +1147,11 @@ impl MessageProcessor {
             ClientRequest::ThreadSearch { params, .. } => {
                 self.thread_processor.thread_search(params).await
             }
+            ClientRequest::ThreadSearchOccurrences { params, .. } => {
+                self.thread_processor
+                    .thread_search_occurrences(params)
+                    .await
+            }
             ClientRequest::ThreadLoadedList { params, .. } => {
                 self.thread_processor.thread_loaded_list(params).await
             }
@@ -1218,9 +1224,15 @@ impl MessageProcessor {
             ClientRequest::PluginShareDelete { params, .. } => {
                 self.plugin_processor.plugin_share_delete(params).await
             }
+            ClientRequest::AppsRead { params, .. } => self.apps_processor.apps_read(params).await,
             ClientRequest::AppsList { params, .. } => {
                 self.apps_processor.apps_list(&request_id, params).await
             }
+            ClientRequest::AppsInstalled { params, .. } => self
+                .apps_processor
+                .apps_installed(params)
+                .await
+                .map(|response| Some(response.into())),
             ClientRequest::SkillsConfigWrite { params, .. } => {
                 self.catalog_processor.skills_config_write(params).await
             }
